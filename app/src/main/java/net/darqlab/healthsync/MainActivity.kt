@@ -1,7 +1,10 @@
 package net.darqlab.healthsync
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -32,7 +35,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.health.connect.client.PermissionController
 import androidx.lifecycle.lifecycleScope
+import androidx.work.WorkManager
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import net.darqlab.healthsync.ui.theme.HealthSyncTheme
 
 class MainActivity : ComponentActivity() {
@@ -42,6 +49,7 @@ class MainActivity : ComponentActivity() {
     private val healthConnectAvailable = mutableStateOf(false)
     private val permissionsGranted = mutableStateOf(false)
     private val syncScheduled = mutableStateOf(false)
+    private val batteryOptimizationExempt = mutableStateOf(false)
     private val statusMessage = mutableStateOf("Initializing...")
     private val logEntries = mutableStateListOf<LogEntry>()
 
@@ -61,7 +69,21 @@ class MainActivity : ComponentActivity() {
     private fun startSync() {
         HealthSyncWorker.schedule(this)
         syncScheduled.value = true
-        statusMessage.value = "Sync scheduled (every 1 hour)"
+        statusMessage.value = "Sync scheduled (check every 20 min)"
+        updateNextSyncTime()
+    }
+
+    private fun updateNextSyncTime() {
+        lifecycleScope.launch {
+            val workInfos = WorkManager.getInstance(this@MainActivity)
+                .getWorkInfosForUniqueWork("health_check")
+                .get()
+            val nextMillis = workInfos.firstOrNull()?.nextScheduleTimeMillis ?: Long.MAX_VALUE
+            if (nextMillis < Long.MAX_VALUE) {
+                val nextTime = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(nextMillis))
+                statusMessage.value = "Sync scheduled (every 20 min) · next: $nextTime"
+            }
+        }
     }
 
     private fun checkPermissionsAndSync() {
@@ -90,6 +112,17 @@ class MainActivity : ComponentActivity() {
     private fun clearLog() {
         SyncLog.clear(this)
         logEntries.clear()
+    }
+
+    private fun checkBatteryOptimization() {
+        val pm = getSystemService(POWER_SERVICE) as PowerManager
+        batteryOptimizationExempt.value = pm.isIgnoringBatteryOptimizations(packageName)
+    }
+
+    private fun requestBatteryOptimizationExemption() {
+        val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+            Uri.parse("package:$packageName"))
+        startActivity(intent)
     }
 
     private fun openHealthConnectSettings() {
@@ -127,6 +160,7 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        checkBatteryOptimization()
         refreshLog()
 
         setContent {
@@ -136,6 +170,7 @@ class MainActivity : ComponentActivity() {
                         healthConnectAvailable = healthConnectAvailable.value,
                         permissionsGranted = permissionsGranted.value,
                         syncScheduled = syncScheduled.value,
+                        batteryOptimizationExempt = batteryOptimizationExempt.value,
                         statusMessage = statusMessage.value,
                         logEntries = logEntries,
                         onOpenSettings = ::openHealthConnectSettings,
@@ -143,6 +178,7 @@ class MainActivity : ComponentActivity() {
                         onSyncNow = ::syncNow,
                         onRefreshLog = ::refreshLog,
                         onClearLog = ::clearLog,
+                        onRequestBatteryExemption = ::requestBatteryOptimizationExemption,
                         modifier = Modifier.padding(innerPadding)
                     )
                 }
@@ -152,10 +188,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        checkBatteryOptimization()
         if (healthConnectAvailable.value && ::healthManager.isInitialized) {
             checkPermissionsAndSync()
         }
         refreshLog()
+        updateNextSyncTime()
     }
 }
 
@@ -164,6 +202,7 @@ fun StatusScreen(
     healthConnectAvailable: Boolean,
     permissionsGranted: Boolean,
     syncScheduled: Boolean,
+    batteryOptimizationExempt: Boolean,
     statusMessage: String,
     logEntries: List<LogEntry>,
     onOpenSettings: () -> Unit,
@@ -171,6 +210,7 @@ fun StatusScreen(
     onSyncNow: () -> Unit,
     onRefreshLog: () -> Unit,
     onClearLog: () -> Unit,
+    onRequestBatteryExemption: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(modifier = modifier.padding(16.dp)) {
@@ -179,6 +219,7 @@ fun StatusScreen(
         StatusLine("Health Connect", healthConnectAvailable)
         StatusLine("Permissions", permissionsGranted)
         StatusLine("Sync scheduled", syncScheduled)
+        StatusLine("Background unrestricted", batteryOptimizationExempt)
         Spacer(modifier = Modifier.height(8.dp))
         Text(text = statusMessage, fontSize = 14.sp, color = Color.Gray)
 
@@ -186,6 +227,13 @@ fun StatusScreen(
             Spacer(modifier = Modifier.height(12.dp))
             Button(onClick = onOpenSettings, modifier = Modifier.fillMaxWidth()) {
                 Text("Open Health Connect Settings")
+            }
+        }
+
+        if (!batteryOptimizationExempt) {
+            Spacer(modifier = Modifier.height(12.dp))
+            Button(onClick = onRequestBatteryExemption, modifier = Modifier.fillMaxWidth()) {
+                Text("Allow Background Execution")
             }
         }
 
@@ -260,6 +308,7 @@ fun StatusScreenPreview() {
             healthConnectAvailable = true,
             permissionsGranted = true,
             syncScheduled = true,
+            batteryOptimizationExempt = true,
             statusMessage = "Sync scheduled (every 1 hour)",
             logEntries = listOf(
                 LogEntry("12:00:01", "Sync started"),
@@ -272,7 +321,8 @@ fun StatusScreenPreview() {
             onRefresh = {},
             onSyncNow = {},
             onRefreshLog = {},
-            onClearLog = {}
+            onClearLog = {},
+            onRequestBatteryExemption = {}
         )
     }
 }
