@@ -20,7 +20,7 @@ Health Connect → HealthConnectManager → HealthSyncWorker → OkHttp POST →
 |---|---|---|
 | Steps | Sum | Today (midnight → now) |
 | Heart rate | Latest single BPM sample | Today |
-| Sleep | Latest session duration | Last session (looks back 12 h before midnight to catch overnight sessions) |
+| Sleep | Latest session — total hours + stage breakdown | Last session (looks back 12 h before midnight to catch overnight sessions) |
 | Distance | Sum | Today |
 | Calories | Sum (TotalCaloriesBurned; fallback to ActiveCaloriesBurned) | Today |
 | Elevation gained | Sum | Today |
@@ -44,9 +44,22 @@ Health Connect → HealthConnectManager → HealthSyncWorker → OkHttp POST →
   "elevationGained":  12.5,
   "exerciseMinutes":  45,
   "oxygenSaturation": 97.0,
-  "speed":            1.38
+  "speed":            1.38,
+  "sleepStages": {
+    "lightMinutes": 325,
+    "deepMinutes":  92,
+    "remMinutes":   0,
+    "awakeMinutes": 15,
+    "stages": [
+      { "stage": "light", "from": "2026-02-25T14:31:00Z", "to": "2026-02-25T15:02:00Z", "minutes": 31 },
+      { "stage": "awake", "from": "2026-02-25T15:02:00Z", "to": "2026-02-25T15:15:00Z", "minutes": 13 },
+      { "stage": "deep",  "from": "2026-02-25T15:22:00Z", "to": "2026-02-25T15:29:00Z", "minutes": 7  }
+    ]
+  }
 }
 ```
+
+> `sleepStages` is omitted when the session has no stage detail. `sleep` (total hours) is always present and backward compatible.
 
 ## Setup
 
