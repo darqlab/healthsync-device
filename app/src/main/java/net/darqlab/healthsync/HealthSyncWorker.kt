@@ -15,6 +15,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.UnknownHostException
 import java.net.ConnectException
@@ -98,7 +99,7 @@ class HealthSyncWorker(
 
             val steps            = manager.readSteps(syncFrom, syncTo)
             val heartRate        = manager.readLatestHeartRate(syncFrom, syncTo)
-            val sleep            = manager.readSleepHours(syncFrom, syncTo)
+            val sleep            = manager.readSleep(syncFrom, syncTo)
             val distance         = manager.readDistance(syncFrom, syncTo)
             val calories         = manager.readCalories(syncFrom, syncTo)
             val elevationGained  = manager.readElevationGained(syncFrom, syncTo)
@@ -107,9 +108,9 @@ class HealthSyncWorker(
             val speed            = manager.readLatestSpeed(syncFrom, syncTo)
 
             SyncLog.add(ctx, "steps: $steps, hr: $heartRate bpm, spo2: ${"%.1f".format(oxygenSaturation)}%, " +
-                    "sleep: ${"%.1f".format(sleep)}h, dist: ${"%.0f".format(distance)}m, " +
-                    "cal: ${"%.0f".format(calories)}, elev: ${"%.1f".format(elevationGained)}m, " +
-                    "exercise: ${exerciseMinutes}min, speed: ${"%.2f".format(speed)}m/s")
+                    "sleep: ${"%.1f".format(sleep.totalHours)}h (light: ${sleep.lightMinutes}m, deep: ${sleep.deepMinutes}m, rem: ${sleep.remMinutes}m, awake: ${sleep.awakeMinutes}m), " +
+                    "dist: ${"%.0f".format(distance)}m, cal: ${"%.0f".format(calories)}, " +
+                    "elev: ${"%.1f".format(elevationGained)}m, exercise: ${exerciseMinutes}min, speed: ${"%.2f".format(speed)}m/s")
 
             val payload = JSONObject().apply {
                 put("userId",           "114142556320445743052")
@@ -118,13 +119,31 @@ class HealthSyncWorker(
                 put("syncTo",           syncTo.toString())
                 put("steps",            steps)
                 put("heartRate",        heartRate)
-                put("sleep",            sleep)
+                put("sleep",            sleep.totalHours)
                 put("distance",         distance)
                 put("calories",         calories)
                 put("elevationGained",  elevationGained)
                 put("exerciseMinutes",  exerciseMinutes)
                 put("oxygenSaturation", oxygenSaturation)
                 put("speed",            speed)
+                if (sleep.stages.isNotEmpty()) {
+                    put("sleepStages", JSONObject().apply {
+                        put("lightMinutes", sleep.lightMinutes)
+                        put("deepMinutes",  sleep.deepMinutes)
+                        put("remMinutes",   sleep.remMinutes)
+                        put("awakeMinutes", sleep.awakeMinutes)
+                        put("stages", JSONArray().apply {
+                            sleep.stages.forEach { s ->
+                                put(JSONObject().apply {
+                                    put("stage",   s.stage)
+                                    put("from",    s.from)
+                                    put("to",      s.to)
+                                    put("minutes", s.minutes)
+                                })
+                            }
+                        })
+                    })
+                }
             }
 
             Log.d("HealthSync", "Sending: $payload")

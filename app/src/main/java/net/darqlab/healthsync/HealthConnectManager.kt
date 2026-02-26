@@ -17,6 +17,22 @@ import java.time.temporal.ChronoUnit
 
 data class NewDataResult(val hasNew: Boolean, val nextToken: String)
 
+data class SleepStage(
+    val stage: String,
+    val from: String,
+    val to: String,
+    val minutes: Long,
+)
+
+data class SleepData(
+    val totalHours: Double,
+    val lightMinutes: Long,
+    val deepMinutes: Long,
+    val remMinutes: Long,
+    val awakeMinutes: Long,
+    val stages: List<SleepStage>,
+)
+
 class HealthConnectManager(private val context: Context) {
 
     private val client = HealthConnectClient.getOrCreate(context)
@@ -93,8 +109,8 @@ class HealthConnectManager(private val context: Context) {
         return client.readRecords(request).records.sumOf { it.count }
     }
 
-    /** Duration in hours of the most recent sleep session in the last 24 h. */
-    suspend fun readSleepHours(from: Instant, to: Instant): Double {
+    /** Most recent sleep session — total hours + stage breakdown. */
+    suspend fun readSleep(from: Instant, to: Instant): SleepData {
         // Look back 12 h before midnight to catch overnight sessions that started
         // yesterday evening (e.g. 22:31 → 05:43).
         val queryFrom = from.minus(12, ChronoUnit.HOURS)
@@ -104,8 +120,36 @@ class HealthConnectManager(private val context: Context) {
             ascendingOrder = false,
             pageSize = 1
         )
-        val session = client.readRecords(request).records.firstOrNull() ?: return 0.0
-        return Duration.between(session.startTime, session.endTime).toMinutes() / 60.0
+        val session = client.readRecords(request).records.firstOrNull()
+            ?: return SleepData(0.0, 0L, 0L, 0L, 0L, emptyList())
+
+        val totalHours = Duration.between(session.startTime, session.endTime).toMinutes() / 60.0
+
+        var lightMinutes = 0L
+        var deepMinutes  = 0L
+        var remMinutes   = 0L
+        var awakeMinutes = 0L
+
+        val stages = session.stages.map { s ->
+            val mins = Duration.between(s.startTime, s.endTime).toMinutes()
+            val label = when (s.stage) {
+                SleepSessionRecord.STAGE_TYPE_LIGHT            -> { lightMinutes += mins; "light"    }
+                SleepSessionRecord.STAGE_TYPE_DEEP             -> { deepMinutes  += mins; "deep"     }
+                SleepSessionRecord.STAGE_TYPE_REM              -> { remMinutes   += mins; "rem"      }
+                SleepSessionRecord.STAGE_TYPE_AWAKE,
+                SleepSessionRecord.STAGE_TYPE_AWAKE_IN_BED    -> { awakeMinutes += mins; "awake"    }
+                SleepSessionRecord.STAGE_TYPE_SLEEPING         -> "sleeping"
+                else                                           -> "unknown"
+            }
+            SleepStage(
+                stage   = label,
+                from    = s.startTime.toString(),
+                to      = s.endTime.toString(),
+                minutes = mins,
+            )
+        }
+
+        return SleepData(totalHours, lightMinutes, deepMinutes, remMinutes, awakeMinutes, stages)
     }
 
     suspend fun readDistance(from: Instant, to: Instant): Double {
